@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebAR - Tekanan Hidrostatis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; background-color: #f3f4f6; }
+        
+        /* Custom Scrollbar for LKPD panel */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px; width: 16px;
+            border-radius: 50%;
+            background: #2563eb;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 2px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 6px;
+            cursor: pointer;
+            background: #e2e8f0;
+            border-radius: 3px;
+        }
+        
+        /* Mengatur tampilan saat Mode AR Aktif */
+        #ar-overlay-ui { display: none; }
+        .xr-active #ar-overlay-ui { display: block !important; }
+        .xr-active #ui-overlays { display: none !important; }
+        .xr-active #lkpd-panel { display: none !important; }
+        .xr-active #ar-container { background-color: transparent !important; }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.4);
+        }
+
+        /* CSS Animasi untuk Panel Minimize */
+        #lkpd-panel {
+            transition: margin 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .panel-minimized {
+            margin-top: -50vh; /* Geser ke atas (keluar layar) pada layar HP */
+        }
+        @media (min-width: 768px) {
+            .panel-minimized {
+                margin-top: 0;
+                margin-left: -400px; /* Geser ke kiri (keluar layar) pada layar Desktop */
+            }
+        }
+    </style>
+    
+    <!-- Import Maps for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body class="h-screen w-screen flex flex-col md:flex-row text-gray-800 overflow-hidden">
+
+    <!-- BAGIAN KIRI: Panel LKPD -->
+    <div id="lkpd-panel" class="relative w-full md:w-[400px] bg-white h-1/2 md:h-full shadow-2xl z-30 flex flex-col shrink-0 border-r border-gray-200 transition-all duration-300 ease-in-out">
+        
+        <!-- Tombol Minimize Samping (Khusus Desktop) -->
+        <button id="btn-toggle-side" title="Sembunyikan/Tampilkan Panel" class="hidden md:flex absolute top-1/2 -right-8 w-8 h-16 bg-blue-600 hover:bg-blue-700 text-white rounded-r-lg items-center justify-center shadow-[4px_0_10px_rgba(0,0,0,0.1)] transform -translate-y-1/2 z-40 border-y border-r border-blue-700 cursor-pointer group transition-colors">
+            <svg id="icon-chevron-side" class="w-5 h-5 transition-transform duration-300 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+        </button>
+
+        <!-- Tombol Minimize Bawah (Khusus HP/Mobile) -->
+        <button id="btn-toggle-bottom" title="Sembunyikan/Tampilkan Panel" class="md:hidden flex absolute -bottom-8 left-1/2 transform -translate-x-1/2 w-16 h-8 bg-blue-600 hover:bg-blue-700 text-white rounded-b-lg items-center justify-center shadow-[0_4px_10px_rgba(0,0,0,0.1)] z-40 border-x border-b border-blue-700 cursor-pointer group transition-colors">
+            <svg id="icon-chevron-bottom" class="w-5 h-5 transition-transform duration-300 transform -rotate-90 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+        </button>
+
+        <!-- Area Konten (Dibungkus terpisah agar tombol di luar tidak terpotong scroll) -->
+        <div class="w-full h-full flex flex-col overflow-y-auto overflow-x-hidden bg-white relative z-10">
+            <div class="p-6 bg-blue-600 text-white shadow-md shrink-0 relative z-20">
+                <h1 class="text-2xl font-bold">LKPD Virtual</h1>
+                <p class="text-sm opacity-90">Praktikum Tekanan Hidrostatis</p>
+            </div>
+
+            <div class="p-6 space-y-6 flex-grow">
+                <!-- Identitas -->
+                    <li>Gunakan tombol <b>Mulai AR</b> untuk meletakkan alat di meja nyata Anda.</li>
+                </ol>
+            </section>
+
+            <!-- Tabel Pengamatan -->
+            <section class="space-y-3">
+                <h2 class="font-semibold text-lg border-b pb-1 flex justify-between items-center">
+                    Tabel Pengamatan
+                    <button id="btn-record" class="bg-green-500 hover:bg-green-600 text-white text-xs px-3 py-1.5 rounded transition shadow-sm font-medium">Catat Data</button>
+                </h2>
+                <div class="overflow-x-auto rounded border">
+                    <table class="w-full text-xs text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-100">
+                                <th class="border-b p-2 font-medium">No</th>
+                                <th class="border-b p-2 font-medium">ρ (kg/m³)</th>
+                                <th class="border-b p-2 font-medium">h (m)</th>
+                                <th class="border-b p-2 font-medium">P (Pa)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="data-table-body">
+                            <!-- Data rows will be added here -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Analisis -->
+            <section class="space-y-2 pb-10">
+                <h2 class="font-semibold text-lg border-b pb-1">Analisis & Kesimpulan</h2>
+                <p class="text-sm font-medium text-gray-700">1. Bagaimana hubungan antara kedalaman (h) dengan tekanan hidrostatis (P)?</p>
+                <textarea class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-400 outline-none text-sm bg-gray-50" rows="3"></textarea>
+                <p class="text-sm font-medium text-gray-700 mt-2">2. Bagaimana pengaruh massa jenis cairan terhadap tekanan?</p>
+                <textarea class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-400 outline-none text-sm bg-gray-50" rows="3"></textarea>
+            </section>
+        </div>
+    </div>
+</div>
+
+    <!-- BAGIAN KANAN: Area 3D & UI Overlays -->
+    <div class="flex-1 relative h-1/2 md:h-full bg-gray-100 flex flex-col overflow-hidden">
+        
+        <!-- WebGL & WebXR Canvas container -->
+        <div id="ar-container" class="absolute inset-0 z-0 bg-gray-200">
+            <!-- 3D Canvas (Menerima interaksi penuh untuk zoom dan rotasi) -->
+            <canvas id="webgl-canvas" class="w-full h-full outline-none touch-none cursor-grab active:cursor-grabbing"></canvas>
+            
+            <!-- AR Button Container -->
+            <div id="ar-button-container" class="absolute bottom-4 right-4 z-50 pointer-events-auto"></div>
+            
+            <!-- DOM Overlay for Immersive AR session -->
+            <div id="ar-overlay-ui" class="absolute top-0 left-0 w-full h-full pointer-events-none">
+                <div class="absolute bottom-10 left-1/2 transform -translate-x-1/2 w-[90%] max-w-sm glass-panel p-4 rounded-xl shadow-2xl pointer-events-auto">
+                    <div class="text-center mb-2">
+                        <span class="text-xs text-gray-500 font-medium uppercase tracking-wide">Tekanan di Sensor</span><br>
+                        <span id="ar-output-pressure" class="text-3xl font-bold text-blue-600">0</span> <span class="text-sm text-gray-600">Pa</span>
+                    </div>
+                    <div class="flex justify-between text-sm mb-1 mt-4">
+                        <span class="font-medium text-gray-700">Kedalaman (h)</span>
+                        <span class="font-mono text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded"><span id="ar-val-depth">0.50</span> m</span>
+                    </div>
+                    <input type="range" id="ar-slider-depth" min="0.01" max="1.00" step="0.01" value="0.5" class="w-full accent-blue-600 h-2 mt-2">
+                    <button id="btn-exit-ar" class="mt-5 w-full bg-red-500 hover:bg-red-600 text-white rounded-lg py-2.5 text-sm font-semibold transition shadow-md">Keluar Mode AR</button>
+                </div>
+                <div id="ar-instruction" class="absolute top-1/4 left-0 w-full text-center pointer-events-none">
+                    <span class="bg-black/70 text-white px-5 py-3 rounded-full backdrop-blur text-sm shadow-lg border border-white/20">
+                        Arahkan kamera ke permukaan datar & Tap untuk meletakkan
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- UI Overlays untuk Mode Non-AR (Desktop/Mobile Web) -->
+        <div id="ui-overlays" class="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between">
+            
+            <!-- Header Status & Output (Pojok Kanan Atas) -->
+            <div class="p-4 flex justify-end items-start w-full">
+                <div class="glass-panel p-4 rounded-xl shadow-lg pointer-events-auto min-w-[260px] cursor-default border border-gray-200">
+                    <div id="toggle-hasil-btn" class="flex justify-between items-center cursor-pointer group">
+                        <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">Hasil Pengukuran</h3>
+                        <svg id="icon-hasil" class="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-transform duration-300 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                    </div>
+                    
+                    <div id="content-hasil" class="overflow-hidden transition-all duration-300 max-h-[300px] opacity-100 mt-1">
+                        <div class="text-4xl font-bold text-blue-600 mb-2 tracking-tight mt-2">
+                            <span id="output-pressure">0</span> <span class="text-xl text-gray-400 font-medium">Pa</span>
+                        </div>
+                        <div class="text-xs text-gray-500 font-mono bg-gray-100 p-1.5 rounded text-center mb-3">P = ρ × g × h</div>
+                        
+                        <!-- Graph Canvas -->
+                        <div class="w-full h-32 bg-white rounded border border-gray-100 p-1 relative">
+                            <canvas id="pressure-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kontrol Parameter (Bawah Tengah) -->
+            <div class="p-4 w-full max-w-2xl mx-auto mb-4">
+                <div class="glass-panel p-5 rounded-2xl shadow-xl pointer-events-auto cursor-default border border-gray-200">
+                    
+                    <div class="flex justify-between items-center mb-1">
+                        <div id="toggle-param-btn" class="flex items-center gap-2 cursor-pointer group">
+                            <svg id="icon-param" class="w-6 h-6 text-gray-500 group-hover:text-blue-500 transition-transform duration-300 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                            <h3 class="font-bold text-lg text-gray-800">Parameter Simulasi</h3>
+                        </div>
+                        <button id="btn-reset" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-md text-sm font-medium transition text-gray-700">Reset</button>
+                    </div>
+
+                    <div id="content-param" class="overflow-hidden transition-all duration-300 max-h-[400px] opacity-100 space-y-4 pt-3">
+                        <!-- Fluid Selector -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Jenis Cairan</label>
+                            <select id="fluid-select" class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500 bg-gray-50 outline-none transition-shadow">
+                                <option value="1000" selected>Air (1000 kg/m³)</option>
+                                <option value="1025">Air Laut (1025 kg/m³)</option>
+                                <option value="800">Minyak (800 kg/m³)</option>
+                                <option value="1260">Gliserin (1260 kg/m³)</option>
+                                <option value="custom">Kustom...</option>
+                            </select>
+                        </div>
+                    <div class="space-y-4 pt-2">
+                        <!-- Density Slider -->
+                        <div id="density-control" class="hidden bg-blue-50 p-3 rounded-lg border border-blue-100">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span class="font-medium text-blue-800">Massa Jenis (ρ)</span>
+                                <span class="font-mono text-blue-700 font-bold bg-white px-2 py-0.5 rounded border border-blue-200"><span id="val-density">1000</span> kg/m³</span>
+                            </div>
+                            <input type="range" id="slider-density" min="500" max="2000" step="10" value="1000" class="accent-blue-600 h-2">
+                        </div>
+
+                        <!-- Gravity Slider -->
+                        <div>
+                            <div class="flex justify-between text-sm mb-2">
+                                <span class="text-gray-600 font-medium">Percepatan Gravitasi (g)</span>
+                                <span class="font-mono text-gray-700"><span id="val-gravity">9.8</span> m/s²</span>
+                            </div>
+                            <input type="range" id="slider-gravity" min="1.0" max="20.0" step="0.1" value="9.8" class="accent-gray-500 h-2">
+                        </div>
+
+                        <!-- Depth Slider -->
+                        <div class="pt-3 border-t border-gray-200">
+                            <div class="flex justify-between text-sm mb-2 items-center">
+                                <span class="font-bold text-blue-700 text-base">Kedalaman Sensor (h)</span>
+                                <span class="font-mono text-white bg-blue-600 px-3 py-1 rounded-md font-bold shadow-sm"><span id="val-depth">0.50</span> m</span>
+                            </div>
+                            <input type="range" id="slider-depth" min="0.01" max="1.00" step="0.01" value="0.5" class="accent-blue-600 h-3">
+                            <div class="flex justify-between text-[10px] font-bold text-gray-400 mt-2 uppercase tracking-wider">
+                                <span>Atas (Permukaan)</span>
+                                <span>Bawah (Dasar)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+        // --- STATE & DATA ---
+        const state = {
+            density: 1000,
+            gravity: 9.8,
+            depth: 0.5,
+            pressure: 0,
+            isARPlacing: true // Flag to check if we are waiting for user to place object in AR
+        };
+
+        const fluidColors = {
+            1000: 0x4dabf7, // Water (Blue)
+            1025: 0x3bc9db, // Sea water (Cyan)
+            800:  0xfcc419, // Oil (Yellow)
+            1260: 0xffa94d, // Glycerin (Orange)
+            'custom': 0xced4da // Gray default for custom
+        };
+
+        let recordCount = 0;
+
+        // --- DOM ELEMENTS ---
+        const ui = {
+            outPressure: document.getElementById('output-pressure'),
+            arOutPressure: document.getElementById('ar-output-pressure'),
+            valDensity: document.getElementById('val-density'),
+            valGravity: document.getElementById('val-gravity'),
+            valDepth: document.getElementById('val-depth'),
+            arValDepth: document.getElementById('ar-val-depth'),
+            
+            slideDensity: document.getElementById('slider-density'),
+            slideGravity: document.getElementById('slider-gravity'),
+            slideDepth: document.getElementById('slider-depth'),
+            arSlideDepth: document.getElementById('ar-slider-depth'),
+            
+            selFluid: document.getElementById('fluid-select'),
+            divDensityCtrl: document.getElementById('density-control'),
+            
+            btnReset: document.getElementById('btn-reset'),
+            btnRecord: document.getElementById('btn-record'),
+            tableBody: document.getElementById('data-table-body'),
+            
+            arInstruction: document.getElementById('ar-instruction'),
+            btnExitAR: document.getElementById('btn-exit-ar')
+        };
+
+        // --- CHART SETUP ---
+        let pressureChart;
+        function initChart() {
+            const ctx = document.getElementById('pressure-chart').getContext('2d');
+            pressureChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [0, 0.2, 0.4, 0.6, 0.8, 1.0], // Depth intervals
+                    datasets: [{
+                        label: 'Tekanan (Pa)',
+                        data: [],
+                        borderColor: 'rgb(59, 130, 246)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.1,
+                        fill: true,
+                        pointRadius: 0 // Hide default points
+                    }, {
+                        label: 'Posisi Saat Ini',
+                        data: [],
+                        backgroundColor: 'rgb(239, 68, 68)', // Red point
+                        borderColor: 'rgb(255, 255, 255)',
+                        borderWidth: 2,
+                        pointRadius: 6,
+                        showLine: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Kedalaman (m)', font: {size: 10} }, ticks: {font: {size: 9}} },
+                        y: { title: { display: false }, ticks: {font: {size: 9}}, suggestedMin: 0 }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    },
+                    animation: { duration: 300 } // smooth updates
+                }
+            });
+        }
+
+        // --- UPDATE LOGIC ---
+        function calculatePhysics() {
+            // P = rho * g * h
+            state.pressure = state.density * state.gravity * state.depth;
+            updateUI();
+            update3DScene();
+            updateChart();
+        }
+
+        function updateUI() {
+            const pStr = state.pressure.toLocaleString('id-ID', { maximumFractionDigits: 0 });
+            ui.outPressure.innerText = pStr;
+            ui.arOutPressure.innerText = pStr;
+            
+            ui.valDensity.innerText = state.density;
+            ui.valGravity.innerText = state.gravity.toFixed(1);
+            
+            const hStr = state.depth.toFixed(2);
+            ui.valDepth.innerText = hStr;
+            ui.arValDepth.innerText = hStr;
+            
+            // Sync sliders
+            if(ui.slideDepth.value != state.depth) ui.slideDepth.value = state.depth;
+            if(ui.arSlideDepth.value != state.depth) ui.arSlideDepth.value = state.depth;
+        }
+
+        function updateChart() {
+            if(!pressureChart) return;
+            
+            // Generate theoretical line based on current rho and g
+            const lineData = [];
+            for (let h = 0; h <= 1; h += 0.2) {
+                lineData.push({ x: h, y: state.density * state.gravity * h });
+            }
+            
+            // Current point
+            const currentPoint = [{ x: state.depth, y: state.pressure }];
+
+            // Update chart labels/data to match continuous X axis approach using scatter-like plotting in line chart
+            // Chart.js requires mapping to labels array indices for simple line charts, 
+            // but we can map exact values by just updating the 'data' array if labels match linearly.
+            
+            const newData = [0, 0.2, 0.4, 0.6, 0.8, 1.0].map(h => state.density * state.gravity * h);
+            pressureChart.data.datasets[0].data = newData;
+            
+            // Simulate the dot by making all points invisible except the closest one, 
+            // or use a plugin. For simplicity, we just update the line. The dot is hard in basic categorical line chart.
+            // Let's change dataset 1 to a scatter dataset just for the point.
+            pressureChart.data.datasets[1].data = [{x: state.depth, y: state.pressure}];
+            // Actually mixed charts need specific config. We'll stick to updating the line.
+            
+            pressureChart.update();
+        }
+
+        // --- EVENT LISTENERS ---
+        ui.slideDensity.addEventListener('input', (e) => {
+            state.density = parseFloat(e.target.value);
+            updateFluidColor('custom');
+            calculatePhysics();
+        });
+
+        ui.slideGravity.addEventListener('input', (e) => {
+            state.gravity = parseFloat(e.target.value);
+            calculatePhysics();
+        });
+
+        ui.slideDepth.addEventListener('input', (e) => {
+            state.depth = parseFloat(e.target.value);
+            calculatePhysics();
+        });
+        
+        ui.arSlideDepth.addEventListener('input', (e) => {
+            state.depth = parseFloat(e.target.value);
+            calculatePhysics();
+        });
+
+        ui.selFluid.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (val === 'custom') {
+                ui.divDensityCtrl.classList.remove('hidden');
+                // state.density remains whatever it was on the slider
+            } else {
+                ui.divDensityCtrl.classList.add('hidden');
+                state.density = parseFloat(val);
+                ui.slideDensity.value = state.density;
+                updateFluidColor(val);
+            }
+            calculatePhysics();
+        });
+
+        ui.btnReset.addEventListener('click', () => {
+            ui.selFluid.value = "1000";
+            ui.selFluid.dispatchEvent(new Event('change'));
+            ui.slideGravity.value = 9.8;
+            ui.slideDepth.value = 0.5;
+            ui.slideGravity.dispatchEvent(new Event('input'));
+            ui.slideDepth.dispatchEvent(new Event('input'));
+        });
+
+        ui.btnRecord.addEventListener('click', () => {
+            recordCount++;
+            const row = document.createElement('tr');
+            row.className = "border-b hover:bg-blue-50";
+            row.innerHTML = `
+                <td class="border p-2 text-center">${recordCount}</td>
+                <td class="border p-2 text-center">${state.density}</td>
+                <td class="border p-2 text-center">${state.depth.toFixed(2)}</td>
+                <td class="border p-2 text-center font-semibold text-blue-600">${state.pressure.toLocaleString('id-ID', { maximumFractionDigits: 0 })}</td>
+            `;
+            ui.tableBody.appendChild(row);
+            
+            // Scroll to bottom
+            const tableContainer = ui.tableBody.parentElement.parentElement;
+            tableContainer.scrollTop = tableContainer.scrollHeight;
+        });
+
+        // --- LOGIKA MINIMIZE PANEL LKPD ---
+        const btnToggleSide = document.getElementById('btn-toggle-side');
+        const btnToggleBottom = document.getElementById('btn-toggle-bottom');
+        const lkpdPanel = document.getElementById('lkpd-panel');
+        const iconChevronSide = document.getElementById('icon-chevron-side');
+        const iconChevronBottom = document.getElementById('icon-chevron-bottom');
+        let isPanelMinimized = false;
+
+        function togglePanel() {
+            isPanelMinimized = !isPanelMinimized;
+            
+            if (isPanelMinimized) {
+                // Sembunyikan panel
+                lkpdPanel.classList.add('panel-minimized');
+                
+                // Putar ikon panah ke arah berlawanan
+                iconChevronSide.classList.add('rotate-180'); 
+                iconChevronBottom.classList.remove('-rotate-90');
+                iconChevronBottom.classList.add('rotate-90');
+            } else {
+                // Tampilkan panel
+                lkpdPanel.classList.remove('panel-minimized');
+                
+                // Kembalikan ikon panah ke posisi awal
+                iconChevronSide.classList.remove('rotate-180');
+                iconChevronBottom.classList.remove('rotate-90');
+                iconChevronBottom.classList.add('-rotate-90');
+            }
+            
+            // Pemicu resize event pada window setelah animasi selesai (0.4 detik) 
+            // Hal ini agar kanvas 3D (Three.js) sadar bahwa ruangnya bertambah lebar 
+            // dan merender ulang ukurannya tanpa harus refresh halaman.
+            setTimeout(() => {
+                window.dispatchEvent(new Event('resize'));
+            }, 400); 
+        }
+
+        // Daftarkan event klik pada kedua tombol (Desktop & Mobile)
+        if(btnToggleSide) btnToggleSide.addEventListener('click', togglePanel);
+        if(btnToggleBottom) btnToggleBottom.addEventListener('click', togglePanel);
+
+        // --- LOGIKA MINIMIZE PANEL KANAN (HASIL & PARAMETER) ---
+        const btnToggleHasil = document.getElementById('toggle-hasil-btn');
+        const contentHasil = document.getElementById('content-hasil');
+        const iconHasil = document.getElementById('icon-hasil');
+        let isHasilMinimized = false;
+
+        btnToggleHasil.addEventListener('click', () => {
+            isHasilMinimized = !isHasilMinimized;
+            if(isHasilMinimized) {
+                contentHasil.style.maxHeight = '0px';
+                contentHasil.style.opacity = '0';
+                contentHasil.style.marginTop = '0px';
+                iconHasil.classList.remove('rotate-180');
+            } else {
+                contentHasil.style.maxHeight = '300px';
+                contentHasil.style.opacity = '1';
+                contentHasil.style.marginTop = '0.25rem'; 
+                iconHasil.classList.add('rotate-180');
+            }
+        });
+
+        const btnToggleParam = document.getElementById('toggle-param-btn');
+        const contentParam = document.getElementById('content-param');
+        const iconParam = document.getElementById('icon-param');
+        let isParamMinimized = false;
+
+        btnToggleParam.addEventListener('click', () => {
+            isParamMinimized = !isParamMinimized;
+            if(isParamMinimized) {
+                contentParam.style.maxHeight = '0px';
+                contentParam.style.opacity = '0';
+                contentParam.style.paddingTop = '0px';
+                iconParam.classList.remove('rotate-180');
+            } else {
+                contentParam.style.maxHeight = '400px';
+                contentParam.style.opacity = '1';
+                contentParam.style.paddingTop = '0.75rem'; 
+                iconParam.classList.add('rotate-180');
+            }
+        });
+
+        // --- THREE.JS & WEBXR SETUP ---
+        let camera, scene, renderer;
+        let controller, reticle;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+        
+        // 3D Objects
+        let mainGroup; // Holds the entire experiment
+        let fluidMesh;
+        let sensorSphere;
+        let arrowGroup;
+        let surfacePlane;
+        
+        // Constants for 3D mapping
+        const CONTAINER_HEIGHT = 1.0; // 1 logical meter
+        const CONTAINER_RADIUS = 0.3;
+        const FLUID_MAX_HEIGHT = 0.9; // Fluid surface level
+        
+        init3D();
+        animate();
+
+        function init3D() {
+            const container = document.getElementById('ar-container');
+            const canvas = document.getElementById('webgl-canvas');
+
+            scene = new THREE.Scene();
+            // Background light gray agar tabung lebih terlihat jelas
+            scene.background = new THREE.Color(0xe5e7eb); 
+
+            camera = new THREE.PerspectiveCamera( 50, container.clientWidth / container.clientHeight, 0.01, 20 );
+            camera.position.set( 1.5, 1.2, 2 );
+
+            // Lighting
+            const light = new THREE.HemisphereLight( 0xffffff, 0xbbbbff, 1 );
+            light.position.set( 0.5, 1, 0.25 );
+            scene.add( light );
+            
+            const dirLight = new THREE.DirectionalLight( 0xffffff, 1.5 );
+            dirLight.position.set( 2, 5, 2 );
+            dirLight.castShadow = true;
+            scene.add( dirLight );
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer( { canvas: canvas, antialias: true, alpha: true } );
+            renderer.setPixelRatio( window.devicePixelRatio );
+            renderer.setSize( container.clientWidth, container.clientHeight );
+            renderer.shadowMap.enabled = true;
+            renderer.xr.enabled = true; // Enable WebXR
+
+            // Orbit Controls (Memungkinkan Zoom dan Rotasi via Mouse/Touch)
+            const controls = new OrbitControls( camera, renderer.domElement );
+            controls.target.set( 0, 0.45, 0 ); // Titik pusat rotasi berada di tengah tabung
+            controls.enableDamping = true; // Gerakan rotasi halus
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 0.8; // Batas zoom paling dekat
+            controls.maxDistance = 4;   // Batas zoom paling jauh
+            controls.enablePan = true;  // Memungkinkan geser (klik kanan/2 jari)
+            controls.update();
+            
+            window.appControls = controls;
+
+            // Build the Experiment Model
+            buildExperimentModel();
+
+            // Setup AR
+            setupAR();
+
+            window.addEventListener( 'resize', onWindowResize );
+        }
+
+        function buildExperimentModel() {
+            // Main group that will be placed in AR
+            mainGroup = new THREE.Group();
+            
+            // 1. Container (Glass Cylinder)
+            const glassGeo = new THREE.CylinderGeometry( CONTAINER_RADIUS, CONTAINER_RADIUS, CONTAINER_HEIGHT, 32 );
+            // Translate geometry so origin is at the bottom
+            glassGeo.translate(0, CONTAINER_HEIGHT/2, 0); 
+            const glassMat = new THREE.MeshPhysicalMaterial({
+                color: 0xffffff,
+                transmission: 0.9,
+                opacity: 1,
+                metalness: 0,
+                roughness: 0,
+                ior: 1.5,
+                thickness: 0.05,
+                side: THREE.DoubleSide,
+                transparent: true
+            });
+            const glassMesh = new THREE.Mesh( glassGeo, glassMat );
+            glassMesh.receiveShadow = true;
+            glassMesh.castShadow = true;
+            mainGroup.add(glassMesh);
+
+            // Add measurement lines on the glass
+            const lineMat = new THREE.LineBasicMaterial({ color: 0x000000 });
+            for(let i=0.1; i<=0.9; i+=0.1) {
+                const ringGeo = new THREE.RingGeometry(CONTAINER_RADIUS, CONTAINER_RADIUS+0.005, 32);
+                const ringMesh = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({color: 0x333333, side: THREE.DoubleSide}));
+                ringMesh.rotation.x = Math.PI / 2;
+                ringMesh.position.y = i;
+                mainGroup.add(ringMesh);
+            }
+
+            // 2. Fluid (Inner Cylinder)
+            const fluidGeo = new THREE.CylinderGeometry( CONTAINER_RADIUS - 0.01, CONTAINER_RADIUS - 0.01, FLUID_MAX_HEIGHT, 32 );
+            fluidGeo.translate(0, FLUID_MAX_HEIGHT/2, 0);
+            const fluidMat = new THREE.MeshPhysicalMaterial({
+                color: fluidColors[1000],
+                transmission: 0.6,
+                transparent: true,
+                roughness: 0.1
+            });
+            fluidMesh = new THREE.Mesh( fluidGeo, fluidMat );
+            mainGroup.add(fluidMesh);
+            
+            // Fluid Surface helper (to make surface visible)
+            const surfaceGeo = new THREE.CircleGeometry(CONTAINER_RADIUS - 0.01, 32);
+            surfacePlane = new THREE.Mesh(surfaceGeo, new THREE.MeshBasicMaterial({color: 0xffffff, transparent:true, opacity:0.3}));
+            surfacePlane.rotation.x = -Math.PI / 2;
+            surfacePlane.position.y = FLUID_MAX_HEIGHT;
+            mainGroup.add(surfacePlane);
+
+            // 3. Sensor & Arrows Group
+            arrowGroup = new THREE.Group();
+            
+            // Sensor Sphere
+            const sphereGeo = new THREE.SphereGeometry( 0.03, 16, 16 );
+            const sphereMat = new THREE.MeshStandardMaterial( { color: 0xff0000, emissive: 0x440000 } );
+            sensorSphere = new THREE.Mesh( sphereGeo, sphereMat );
+            arrowGroup.add(sensorSphere);
+
+            // Pressure Arrows pointing inward
+            const arrowLength = 0.2;
+            const arrowColor = 0xff0000;
+            const headLength = 0.05;
+            const headWidth = 0.04;
+            
+            // Top, Bottom, Left, Right arrows
+            const dirs = [
+                new THREE.Vector3(0, -1, 0), // from top pointing down
+                new THREE.Vector3(0, 1, 0),  // from bottom pointing up
+                new THREE.Vector3(1, 0, 0),  // from left pointing right
+                new THREE.Vector3(-1, 0, 0), // from right pointing left
+                new THREE.Vector3(0, 0, 1),
+                new THREE.Vector3(0, 0, -1)
+            ];
+
+            dirs.forEach(dir => {
+                // To point INWARD to the center, origin is offset, direction is opposite to offset
+                const origin = dir.clone().multiplyScalar(-arrowLength);
+                const arrowHelper = new THREE.ArrowHelper( dir, origin, arrowLength, arrowColor, headLength, headWidth );
+                // Store original properties for scaling later
+                arrowHelper.userData = { 
+                    baseOrigin: origin.clone(), 
+                    baseDir: dir.clone() 
+                };
+                arrowGroup.add( arrowHelper );
+            });
+
+            mainGroup.add(arrowGroup);
+            
+            // Initially place it in center for 3D mode
+            scene.add(mainGroup);
+            
+            // Initial update
+            update3DScene();
+        }
+
+        function updateFluidColor(type) {
+            if(!fluidMesh) return;
+            let hex = fluidColors['custom'];
+            if(fluidColors[type]) {
+                hex = fluidColors[type];
+            }
+            // Smooth color transition could be added here, but direct setting is fine
+            fluidMesh.material.color.setHex(hex);
+        }
+
+        function update3DScene() {
+            if(!arrowGroup || !sensorSphere) return;
+
+            // 1. Update Sensor Position
+            // h is depth from surface.
+            // Surface is at Y = FLUID_MAX_HEIGHT (0.9)
+            // Sensor Y = FLUID_MAX_HEIGHT - h
+            let sensorY = FLUID_MAX_HEIGHT - state.depth;
+            
+            // Clamp sensorY just in case
+            if(sensorY < 0.05) sensorY = 0.05; // don't go below container
+            if(sensorY > FLUID_MAX_HEIGHT) sensorY = FLUID_MAX_HEIGHT;
+            
+            // Animate position smoothly (simple lerp in render loop is better, but direct set is OK for now)
+            arrowGroup.position.y = sensorY;
+
+            // 2. Update Arrows Size based on Pressure
+            // Max theoretical pressure in normal app usage: 2000 (rho) * 20 (g) * 1 (h) = 40000
+            // Normal water at 1m: 1000 * 9.8 * 1 = 9800
+            const maxPressureRef = 15000; 
+            
+            // Scale factor: small minimum scale even at 0 depth, grows linearly
+            let scale = 0.2 + (state.pressure / maxPressureRef);
+            // Cap scale so arrows don't stick out of the glass
+            if(scale > 1.2) scale = 1.2; 
+            
+            // Only show arrows if pressure > 0
+            arrowGroup.visible = state.pressure > 0;
+
+            // Apply scale to arrows. 
+            // We need to scale the ArrowHelpers appropriately
+            arrowGroup.children.forEach(child => {
+                if(child instanceof THREE.ArrowHelper) {
+                    const newLength = 0.1 * scale;
+                    // Keep arrow head visible
+                    child.setLength(newLength, 0.05, 0.04);
+                    // Move origin so tip touches sensor
+                    const newOrigin = child.userData.baseDir.clone().multiplyScalar(-newLength);
+                    child.position.copy(newOrigin);
+                }
+            });
+            
+            // Pulse animation state
+            arrowGroup.userData.pulseScale = scale;
+        }
+
+        function setupAR() {
+            // AR Button with DOM Overlay
+            const arBtnContainer = document.getElementById('ar-button-container');
+            const overlayElement = document.getElementById('ar-overlay-ui');
+            
+            const sessionInit = {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: overlayElement }
+            };
+
+            const arButton = ARButton.createButton( renderer, sessionInit );
+            // Style the generic AR button
+            arButton.style.backgroundColor = '#2563eb';
+            arButton.style.bottom = '20px';
+            arButton.style.padding = '12px 24px';
+            arButton.style.borderRadius = '8px';
+            arButton.style.fontWeight = 'bold';
+            arBtnContainer.appendChild( arButton );
+
+            // Setup AR Controllers
+            controller = renderer.xr.getController( 0 );
+            controller.addEventListener( 'select', onSelect );
+            scene.add( controller );
+
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( - Math.PI / 2 ),
+                new THREE.MeshBasicMaterial( { color: 0x00ff00 } )
+            );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add( reticle );
+
+            // Handle AR Session start/end
+            renderer.xr.addEventListener('sessionstart', () => {
+                document.body.classList.add('xr-active');
+                scene.background = null; // Transparent background for AR
+                mainGroup.visible = false; // Hide model until placed
+                state.isARPlacing = true;
+                ui.arInstruction.style.display = 'block';
+                
+                // Scale model down for AR (1 meter is huge on a desk)
+                mainGroup.scale.set(0.3, 0.3, 0.3);
+            });
+
+            renderer.xr.addEventListener('sessionend', () => {
+                document.body.classList.remove('xr-active');
+                scene.background = new THREE.Color(0xe5e7eb); // Kembalikan warna background
+                
+                // Reset model for 3D view
+                mainGroup.scale.set(1, 1, 1);
+                mainGroup.position.set(0,0,0);
+                mainGroup.visible = true;
+                
+                hitTestSourceRequested = false;
+                hitTestSource = null;
+            });
+            
+            // Exit AR button in overlay
+            ui.btnExitAR.addEventListener('click', () => {
+                const session = renderer.xr.getSession();
+                if(session) session.end();
+            });
+        }
+
+        function onSelect() {
+            if ( reticle.visible && state.isARPlacing ) {
+                // Place the object at reticle position
+                mainGroup.position.setFromMatrixPosition( reticle.matrix );
+                mainGroup.visible = true;
+                state.isARPlacing = false; // Object placed, stop showing reticle
+                ui.arInstruction.style.display = 'none'; // Hide instructions
+            }
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('ar-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize( container.clientWidth, container.clientHeight );
+        }
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            renderer.setAnimationLoop( render );
+        }
+
+        function render( timestamp, frame ) {
+            const time = clock.getElapsedTime();
+
+            // WebXR Hit Testing Logic
+            if ( frame ) {
+                const session = renderer.xr.getSession();
+                if ( session && state.isARPlacing ) {
+                    const referenceSpace = renderer.xr.getReferenceSpace();
+                    if ( !hitTestSourceRequested ) {
+                        session.requestReferenceSpace( 'viewer' ).then( function ( referenceSpace ) {
+                            session.requestHitTestSource( { space: referenceSpace } ).then( function ( source ) {
+                                hitTestSource = source;
+                            } );
+                        } );
+                        session.addEventListener( 'end', function () {
+                            hitTestSourceRequested = false;
+                            hitTestSource = null;
+                        } );
+                        hitTestSourceRequested = true;
+                    }
+
+                    if ( hitTestSource ) {
+                        const hitTestResults = frame.getHitTestResults( hitTestSource );
+                        if ( hitTestResults.length > 0 ) {
+                            const hit = hitTestResults[ 0 ];
+                            reticle.visible = true;
+                            reticle.matrix.fromArray( hit.getPose( referenceSpace ).transform.matrix );
+                        } else {
+                            reticle.visible = false;
+                        }
+                    }
+                } else if (!state.isARPlacing) {
+                    reticle.visible = false; // Hide reticle after placement
+                }
+            }
+            
+            // Update OrbitControls untuk efek damping
+            if (window.appControls) {
+                window.appControls.update();
+            }
+
+            // Simple idle animation (bobbing arrows slightly)
+            if(arrowGroup && arrowGroup.userData.pulseScale > 0) {
+                const baseScale = arrowGroup.userData.pulseScale;
+                const pulse = Math.sin(time * 3) * 0.05 * baseScale; // small pulse
+                
+                arrowGroup.children.forEach(child => {
+                    if(child instanceof THREE.ArrowHelper) {
+                        const newLength = (0.1 * baseScale) + pulse;
+                        child.setLength(newLength, 0.05, 0.04);
+                        const newOrigin = child.userData.baseDir.clone().multiplyScalar(-newLength);
+                        child.position.copy(newOrigin);
+                    }
+                });
+            }
+
+            renderer.render( scene, camera );
+        }
+
+        // Initialize Everything
+        initChart();
+        calculatePhysics(); // initial calculation
+
+    </script>
+</body>
+</html>
